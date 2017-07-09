@@ -1,0 +1,422 @@
+---
+title: "Analisis del Ranking Universitario Mundial"
+author: Gustavo Bruges. Ph.D.
+output: html_notebook
+---
+El presente análisis se hizo con el fin didactico de mostrar como abordar el conjunto de
+datos para la evaluación final del Tópico Especial: R para Cientificos dictado en el Instituto Venezolano de Investigaciones Científicas. Existen distintos abordajes, y cada estudiante le dara su aproximación personal. Los datos fueron adquiridos del sitio https://data.world/
+
+![](universities_orig.jpg)
+
+The Times Higher Education es una organización que seencarga de  la clasificación universitaria mundial, genera  tablas de rendimiento global que juzgan a las universidades en cuantoa a intensidad en la investigación en todas sus principales aspectos: enseñanza, investigación, transferencia de conocimientos y perspectivas internacionales. Utilizan 13 indicadores de desempeño cuidadosamente calibrados para proporcionar las comparaciones más completas y equilibradas
+
+Los indicadores de desempeño se agrupan en cinco áreas:
+
+-La enseñanza (el entorno de aprendizaje)
+
+-Investigación (volumen, ingresos y reputación)
+
+-Citas (influencia de la investigación)
+
+-Perspectiva internacional (personal, estudiantes e investigación)
+
+-Ingresos de la industria (transferencia de conocimiento
+
+
+
+## Cargar paquetes necesarios
+
+
+```{r eval=TRUE}
+rm(list = ls())
+library(dplyr) # Manejo de data frames
+library(tidyr) #Arreglo de tablas
+library(readr) #Lectura de fuentes externas tipoc csv, retornara un objeto data.frame tibble
+library(ggplot2) #Gramatica de graficos
+library(GGally) #Analisis de correlacion de datos, similar a psych
+library(ggthemes) #Temas adicionales para ggplot
+library(gganimate) #Animacion de graficos hechos en ggplot
+```
+
+## Lectura de los datos
+   
+```{r}
+
+worldUni <- read_csv("world-university-rankings-timesData.csv")
+```
+
+#### Evaluacion de la data frame
+
+```{r}
+class(worldUni)
+```
+
+#### Evaluar los tipos de variables con glimpse
+```{r}
+glimpse(worldUni)
+```
+Observando las columnas y los tipos de datos, vemos que hay una serie de detalles que es importante corregir:
+world_rank: esta como tipo caracter, esto posiblemente a que en en el ranking a muchas universidades se le asigno un valor por intervalo y no un valor unico, en este sentido
+se tienen dos aproximaciones: 1) Hacer una coercion numerica o dividir los datos en dos grupos, el de aquellas univeridades que tienen un valor unico(una cifra) y las que posean intervalos y con estas ultimas tratar de estimar un ranking promedio entre los dos valores
+del intervalo. En este caso procederemos con la segunda aproximacion para ai tener una mayor numero de universidades
+
+country_name: viene como caracter, se recomienda hacer una coercion a factor para posteriores analisis
+
+income(ingresos) y total_score vienen como tipo caracter, en este caso debido a falta de informacion (hay guiones); si se realiza una coercion a numerico puede solventarse este asunto.
+
+la columna international_students tiene asociado cada valor una etiqueta llamada porcentaje,
+el cual se puede modificar eliminando este caracter
+
+la columna fema_male_ratio contiene un caracter : el cual lo podemos elimiar para tener un valor númerico con esta relacion
+
+#### Modificacion de world_rank
+```{r, echo=TRUE}
+#separamos world_rank en dos columnas y calculamos una media entre ellas,
+# utilizamos separate y transmute
+worldUni <- worldUni %>%  
+  separate(world_rank,into=c("world_rank1","world_rank2"),convert=TRUE) %>%
+  mutate(world_rank=round(rowMeans(.[1:2],na.rm=TRUE))) 
+```
+- Se separó world_rank en dos columnas world_rank1 y world_rank2 luego se creo nuevamente una columna world_rank con el promedio entre los dos etremos del intervalo, considerando los NA,
+ya que aquellas columnas con valores unicos carecen de un intervalo.
+```{r, echo =TRUE}
+glimpse(worldUni)
+```
+
+Eliminamos las dos primeras columnas y colocamos world_rank como la primera
+```{r, echo=TRUE}
+worldUni <- worldUni[-c(1,2)]
+glimpse(worldUni)
+worldUni <- worldUni[,c(14,1:13)]
+glimpse(worldUni)
+```
+Procedemos a realiar la coercion de las columnas country(factor), income, total_score
+```{r, echo=TRUE}
+
+worldUni <- worldUni %>% 
+  mutate(world_rank=as.integer(world_rank),country=factor(country),income=as.numeric(income),
+         total_score=as.numeric(total_score))
+glimpse(worldUni)
+```
+Ahora procedemos a eliminar el porcentaje de international_students con la funcion 
+parse_number de readr
+```{r, echo=TRUE}
+worldUni <- worldUni %>% mutate(international_students=parse_number(international_students))
+glimpse(worldUni)
+```
+Para la columna female_male_ratio procedemos a realizar la separación del primer y el segundo termino de female:male. No se requiere usar mutate para generar las nuevas columnas
+```{r, echo=TRUE}
+ worldUni <- worldUni %>% 
+  separate(female_male_ratio,into=c("female","male"),sep=" : ", convert=TRUE) 
+glimpse(worldUni)
+worldUni <- worldUni %>% mutate(female=as.numeric(female))
+
+```
+Creamos nuevamente la columna female_male_ratio
+
+```{r, echo=TRUE}
+ worldUni <- worldUni %>% mutate(female_male_ratio=female/male)
+glimpse(worldUni)
+```
+
+Eliminamos las columnas female y male
+```{r,echo=TRUE}
+worldUni <- worldUni[,-c(13,14)]
+
+```
+Ya tenemos nuestra tabla ajustada para el analisis
+```{r, echo=TRUE}
+glimpse(worldUni)
+```
+## ¿Qué países están representados?
+## ¿Cuál es el país con más universidades en el ranking?
+```{r, echo =TRUE}
+tablaA <- prop.table(table(worldUni$country))
+tablaA
+```
+El pais con mayor representación es Estados Unidos de America con 659, la tabla anterior se puede representar con una distribución de frecuencia
+```{r, echo =TRUE}
+tablaA <- as.matrix(tablaA)
+tablaA <- data_frame(country=rownames(tablaA),freq=tablaA[,1])
+tablaA %>% filter(freq>0.01) %>% arrange(desc(freq)) %>% 
+  ggplot(aes(country,freq,fill=country))+
+  geom_col(col="black",show.legend = FALSE)+
+  coord_flip()+
+  theme_few()+
+  ggtitle("Paises con mayor representación en en el ranking universitario")+
+  xlab("Países")+
+  ylab("Frecuencia")
+```
+
+## FUNCIONES
+### Crear una funcion denominada rankUni que muestre n pantalla el nombre de la universidad al suministrale los argumentos world_rank y año de evaluación (year). La salida debe ser un vector caracter de longitud 1
+```{r,echo=TRUE}
+rankUni <- function(rank,year){
+  require(dplyr)
+  A <- worldUni %>% 
+    filter(world_rank==rank,year == year)
+  as.character(A[1,2])
+}
+```
+### Probando la función para los rangos
+1,10 y 100 para los años 2015 y 2016 respectivamente
+```{r,echo=TRUE}
+rankUni(1,2015)
+```
+
+```{r,echo=TRUE}
+rankUni(10,2015)
+```
+
+```{r,echo=TRUE}
+rankUni(100,2015)
+```
+```{r,echo=TRUE}
+rankUni(1,2016)
+```
+```{r,echo=TRUE}
+rankUni(10,2016)
+```
+```{r}
+rankUni(100,2016)
+```
+## Segunda Función
+Un estudiante interesado en el puntaje de estas universidades quiere saber de manera inmediata si
+introduciendo un país aparecerán las universidades y sus rangos. Diseña una función denominada
+uniCountry que le de respuesta a este estudiante. Esta función usa como argumentos el país(country) y
+el año(usa por defecto el año 2016). En este caso la salida de la función debe ser una tabla que muestre
+las universidades de ese país y y su ranking mundial. Ten en cuenta que hay países que no están
+registrados en esta data frame y si lo introduces no se mostrara resultado alguno. Prueba tu función con
+Argentina, Chile, Colombia, México y Alemania.
+
+```{r, echo =TRUE}
+uniCountry <- function(pais,año=2016) {
+  require(dplyr)
+  worldUni %>% 
+    filter(country== pais & year== año) %>% 
+    arrange(world_rank) %>% 
+    select(university_name,world_rank)
+  
+}
+```
+Probemos la función
+Argentina, Chile, Colombia, México y Alemania.
+```{r, echo =TRUE}
+uniCountry("Argentina")
+```
+
+```{r, echo =TRUE}
+uniCountry("Chile")
+```
+```{r, echo =TRUE}
+uniCountry("Mexico")
+```
+```{r, echo =TRUE}
+uniCountry("Colombia")
+```
+```{r, echo=TRUE}
+uniCountry("Germany")
+```
+
+###  Crea una nueva variable categórica del ranking universitario utilizando tu propio criterio y representa gráficamente para los países americanos su distribución de frecuencia en el año 2016.
+
+Para establecer cuales países estan en el continente americano utilizamos la informacion de gapminder y la unimos a nuestra dataframe con left_join de dplyr
+
+```{r, echo=TRUE}
+library(gapminder)
+data("gapminder")
+gap_2007 <- gapminder %>% filter(year == 2007)
+unique(gap_2007$country)
+gap_2007 <- gap_2007 %>% mutate(country=as.character(country))
+glimpse(gap_2007)
+```
+```{r, echo=TRUE}
+unique(worldUni$country)
+```
+### El nombre United States of America en worldUni aparece como United States en gap_2007 se debe cambiar aplicando una función
+```{r, echo=TRUE}
+cambiarNombre <- function(n){
+  ifelse(n=="United States", "United States of America",n)
+}
+```
+
+Probemos la funcion
+```{r, echo=TRUE}
+cambiarNombre(c("United States","Colombia","Chile"))
+```
+Apliquemos a gap_2007
+```{r, echo =TRUE}
+gap_2007 <- gap_2007 %>% mutate(country=cambiarNombre(country))
+gap_2007 %>% filter(country=="United States of America")
+```
+
+### Hacer el left_join
+```{r, echo =TRUE}
+glimpse(gap_2007)
+```
+
+```{r, echo =TRUE}
+worldUni <- left_join(gap_2007[1:2],worldUni,by="country")
+glimpse(worldUni)
+worldUni <- worldUni %>% mutate(country=factor(country))
+
+```
+### Creamos una variable categorica para los rangos
+```{r, echo=TRUE}
+worldUni <-  worldUni %>% 
+  mutate(univRanges=cut(world_rank,breaks=c(1,50,100,Inf),
+                        labels=c("Alto","Intermedio","Bajo"),
+                        include.lowest=TRUE))
+worldUni %>% select(world_rank,univRanges,university_name)
+```
+## Distribucion de frecuencias para las universidades americanas
+```{r, echo=TRUE}
+worldUni %>% 
+  filter(continent=="Americas") %>% 
+  ggplot(aes(x=world_rank,fill=univRanges)) +
+  geom_density(alpha=0.2) +
+  theme_few()+
+  ggtitle("Distribucion de Frecuencias Rangos Paises Americanos")+
+  xlab("Ranking Mundial")+
+  ylab("Densidad de Frecuencia")
+```
+## Representa gráficamente la variación anual del ranking universitario para las primeras 10 universidades
+## evaluadas en este estudio
+```{r}
+worldUni %>% 
+  filter(world_rank <= 10) %>% 
+            ggplot(aes(year,world_rank,group=year,fill=factor(year)))+
+  geom_boxplot(show.legend=FALSE,alpha=0.4)+
+  ggtitle("Variación del ranking para las primeras 10 universidades")+
+  ylab("Ranking Mundial")+
+  xlab("Año")+
+   scale_x_continuous( breaks = seq(2010, 2016, 1))+
+  theme_few()+
+  coord_flip()
+```
+
+### Elige un método(generación de data.frame, uso de gráficos) que te permita explorar las universidades
+### con mayor proporción de estudiantes femeninas. ¿Tiene incidencia sobre el ranking evaluado?
+En este caso podemos hacer una valuacion multifactorial utilizando la comparacion de varios paneles
+con ggalt un paquete similar a psych
+```{r}
+glimpse(worldUni)
+ggpairs(worldUni[,c(15,3,10)])
+```
+En principio no hay una relacion clara entre enl ranking mundial y la proporcio de mujeres,
+sin embargo pueden hacerse análisis más detallados construyendo una variable categórica
+para la relaciona female_ratio; así por debajo de 1 se considera baja y por encima de 1 alto
+
+```{r}
+worldUni <- worldUni %>% 
+  mutate(femaleRatio=cut(female_male_ratio,breaks=c(0,1,Inf),labels=c("Bajo","Alto")))
+```
+```{r}
+worldUni %>% filter(!is.na(female_male_ratio)) %>% 
+  ggplot(aes(x=total_score,..density..,fill=femaleRatio))+
+  geom_histogram(alpha=0.6,col="black")+
+  facet_wrap(~year)+
+  theme_few()
+```
+
+La figura muestra que se mantiene una baja proporción de mujeres en universidades en los años analizados
+sin variaciones importantes para aquellas universidades con un puntaje total por encima del 80%.
+# Animación
+```{r,echo=TRUE}
+p <- worldUni %>% filter(!is.na(female_male_ratio)) %>% 
+  ggplot(aes(x=total_score,fill=femaleRatio,frame=factor(year)))+
+  geom_density(col="black",alpha=0.5)+
+  theme_few()
+gganimate(p)
+
+```
+
+Otra manera de presentar esto es utiilizar un Heat Map, una matriz grafica de intensidades; para esto usaremos el paquete superheat, este trabaja con data.frame; por que debemos crear un subgrupo de las primeras 50 universidades en el año 2016 y ver como se distribuye la relación female:male
+```{r,echo=TRUE}
+library(superheat)
+matrixA <- worldUni[,3:15]
+matrix2016 <- matrixA %>% filter(world_rank<=30,year==2016)
+matrix2016 <- as.data.frame(matrix2016)
+rownames(matrix2016) <- matrix2016$university_name
+matrix2016$university_name <- NULL
+superheat(matrix2016[,c(7,2,4,12)],
+          # change the size of the labels
+          left.label.size = 0.7,row.title.size = 3,
+          bottom.label.size = 0.09,heat.pal = c("#b35806", "white", "#542788"))
+```
+Como se ve, las intensidades en la relacion female:male son bajas para este grupode universidades
+
+
+### ¿Existe una relación lineal importante entre las variables mostradas en este estudio. Usa gráficos o análisis de regresión que permitan justificar tu respuesta?
+
+Este analisis lo podemos hacer en etapas:
+Exploar nubes de puntos de relaciones entre las variables
+Realizar estimaciones lineales con regresiones simples o múltiples
+
+### Exploracion. 
+Análisis del conjunto de datos
+```{r,echo=TRUE}
+glimpse(worldUni)
+worldUni %>% 
+  select(world_rank:total_score,-university_name,-num_students,-international) %>% ggpairs()
+```
+
+Vemos que hay correlaciones positivas importantes entre enseñanza(teaching);investigación(research)y numero de citas(citations). Esimportante destacar aqui el hecho de la relacion lineal negativa con world_rank, debemos recordar en la escala numerica 1 es el más alto, observos la fuerte correlacion entre total score y world_rank. En este sentido podemos escoger a total_score como una medida directa del world_rank y realizar un modelo de regression donde esta sea la variable dependiente
+
+```{r,echo=TRUE}
+modeloUniRanking <- lm(total_score ~ teaching + research + citations + income,data = worldUni)
+summary(modeloUniRanking)
+```
+En nuestro caso una regresion multiple es mas adecuada e indica el peso de cada componente sobre el puntaje universitario(dado por la pendiente); fijemonos que la pendiente para ingresos tiene una menor contribución sobre el modelo. Otras técnicas pueden ser implementadas pero escapan de los objetivos del curso; por ejemplo machine learning con arboles de regresion o clasificacion con reglas de asociación. 
+
+
+Evaluemos graficamente:
+Recordemos que modeloUniRanking es n objeto tipo lista
+que contiene amplia informacion sobre los parametros del modelo de regresion
+1. se agrega la ccolumna de prediccion del modelo
+2. se genera el intervalo de confianza
+```{r,echo=TRUE}
+modeloUniRanking <- lm(total_score ~ teaching + research + citations + income,
+                       data = worldUni)
+worldUni$model <- stats::predict(modeloUniRanking, newdata=worldUni)
+err <- stats::predict(modeloUniRanking, newdata=worldUni, se = TRUE)
+glimpse(worldUni)
+g <- ggplot(worldUni)
+g <- g + geom_point(aes(x=total_score ,y = model), size = 2, colour = "black",alpha=0.2)
+g <- g + geom_smooth(data=worldUni, aes(x=total_score, y=model), size = 1.5, 
+            colour = "Darkblue", se = TRUE, stat = "smooth")
+g + theme_few() + ggtitle("Mdelo Lineal Multiple para Ranking Univrsitario")
+```
+### El modelo se puede evaluar como un objeto tidy y graficar
+### el  efecto de cada variable predictiva sobre el puntaje total
+```{r, echo=TRUE}
+library(broom)
+tidyModel <- tidy(modeloUniRanking)
+tidyModel
+
+```
+```{r}
+tidyModel %>% filter(term != "(Intercept)") %>% 
+  ggplot(aes(x=factor(term),y=estimate, fill=term))+
+  geom_col(alpha=0.4,show.legend = F,col="black")+
+  theme_few()+
+  geom_errorbar(aes(ymin=estimate-std.error,ymax=estimate+std.error),
+                width = 0.25)+
+  coord_flip()
+```
+
+## Evaluación del Ranking Universitario por Continente
+```{r, echo=TRUE}
+p <- worldUni %>% ggplot(aes(x=total_score, fill=continent))+geom_histogram(alpha=0.4,col="black")+
+  facet_wrap(~continent)+
+  theme_few()
+p
+```
+
+
+
+
+
+
+
+
